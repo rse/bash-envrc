@@ -1,0 +1,287 @@
+##
+##  bash-envrc.rc -- Improve GNU Bash with Environment Variable Run-Commands
+##  Copyright (c) 2018 Ralf S. Engelschall <http://engelschall.com>
+##
+##  Permission is hereby granted, free of charge, to any person obtaining
+##  a copy of this software and associated documentation files (the
+##  "Software"), to deal in the Software without restriction, including
+##  without limitation the rights to use, copy, modify, merge, publish,
+##  distribute, sublicense, and/or sell copies of the Software, and to
+##  permit persons to whom the Software is furnished to do so, subject to
+##  the following conditions:
+##
+##  The above copyright notice and this permission notice shall be included
+##  in all copies or substantial portions of the Software.
+##
+##  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+##  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+##  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+##  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+##  CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+##  TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+##  SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+##
+
+#   we enhance bash(1) only for interactive sessions...
+if [[ $- =~ .*i.* ]]; then
+    envrc () {
+        #   sanity check usage
+        if [[ $# -lt 1 ]]; then
+            echo "-bash: envrc: ERROR: invalid number of arguments" 2>&1
+            echo "-bash: envrc: USAGE: envrc add <dir>" 2>&1
+            echo "-bash: envrc: USAGE: envrc rm <dir>" 2>&1
+            echo "-bash: envrc: USAGE: envrc switch [-i] <new-dir> [<old-dir>]" 2>&1
+            return 1
+        fi
+
+        #   dispatch commands
+        cmd="$1"
+        shift
+        if [[ $cmd == "add" ]]; then
+            ##
+            ##  add directory to whitelist
+            ##
+
+            if [[ $# -ne 1 ]]; then
+                echo "-bash: envrc: ERROR: invalid number of arguments" 2>&1
+                echo "-bash: envrc: USAGE: envrc add <dir>" 2>&1
+                return 1
+            fi
+            local dir="$1"; shift
+            if [[ ! -d ${dir} ]]; then
+                echo "-bash: envrc: ERROR: no such directory \"${dir}\"" 1>&2
+                return 1
+            fi
+            dir=`builtin cd "$dir" && pwd -P`
+            exists=0
+            if [[ -f ~/.envlist ]]; then
+                while read -r line; do
+                    if [[ $line == $dir ]]; then
+                        exists=1
+                        break
+                    fi
+                done < ~/.envlist
+            fi
+            if [[ $exists -eq 0 ]]; then
+                echo "$dir" >> ~/.envlist
+                echo "envrc: added \"${dir}\" to whitelist \"~/.envlist\""
+            else
+                echo "envrc: \"${dir}\" already on whitelist (nothing changed)"
+            fi
+
+        elif [[ $cmd == "rm" ]]; then
+            ##
+            ##  remove directory from whitelist
+            ##
+
+            if [[ $# -ne 1 ]]; then
+                echo "-bash: envrc: ERROR: invalid number of arguments" 2>&1
+                echo "-bash: envrc: USAGE: envrc rm <dir>" 2>&1
+                return 1
+            fi
+            local dir="$1"; shift
+            if [[ ! -d ${dir} ]]; then
+                echo "-bash: envrc: ERROR: no such directory \"${dir}\"" 1>&2
+                return 1
+            fi
+            dir=`builtin cd "$dir" && pwd -P`
+            removed=0
+            if [[ -f ~/.envlist ]]; then
+                while read -r line; do
+                    if [[ $line == $dir ]]; then
+                        removed=1
+                        continue
+                    fi
+                    echo "$line"
+                done < ~/.envlist > ~/.envlist.new
+                if [[ $removed -eq 1 ]]; then
+                    echo "envrc: removed \"${dir}\" from whitelist \"~/.envlist\""
+                    mv ~/.envlist.new ~/.envlist
+                else
+                    echo "envrc: \"${dir}\" not on whitelist \"~/.envlist\" (ignoring removal)"
+                    rm -f ~/.envlist.new
+                fi
+            else
+                echo "envrc: still no such whitelist \"~/.envlist\" (ignoring removal)"
+            fi
+
+        elif [[ $cmd == "switch" ]]; then
+            ##
+            ##  switch directory and activate/deactivate environments
+            ##
+
+            #   determine mode
+            local init=0
+            local verbose=0
+            while [[ $# -ge 1 ]]; do
+                case "$1" in
+                    -i ) init=1; shift ;;
+                    -v ) verbose=$(($verbose + 1)); shift ;;
+                    *  ) break ;;
+                esac
+            done
+
+            #   sanity check usage
+            if [[ ($init -eq 0 && $# -ne 2) || ($init -eq 1 && $# -ne 1) ]]; then
+                echo "-bash: envrc: ERROR: invalid number of arguments" 2>&1
+                echo "-bash: envrc: USAGE: envrc switch [-v] [-i] <new-dir> [<old-dir>]" 2>&1
+                return 1
+            fi
+
+            #   determine absolute path of new/destination directory
+            local dst="$1"; shift
+            if [[ ! -d $dst ]]; then
+                echo "-bash: envrc: ERROR: no such new/destination directory \"${dst}\"" 2>&1
+                return 1
+            fi
+            dst=`builtin cd "$dst" && pwd -P`
+
+            #   determine absolute path of old/source directory
+            local src
+            if [[ $init -eq 0 ]]; then
+                src="$1"; shift
+                if [[ ! -d $dst ]]; then
+                    echo "-bash: envrc: ERROR: no such old/source directory \"${dst}\"" 2>&1
+                    return 1
+                fi
+                src=`builtin cd "$src" && pwd -P`
+            fi
+
+            #   walk the source filesystem path upwards until a common
+            #   prefix of source and destination directory is found
+            local dir="$src"
+            local walk_up=()
+            if [[ $init -eq 0 ]]; then
+                walk_up+=($dir)
+                while [[ ${dst#$dir} == $dst ]]; do
+                    if [[ $dir =~ ^(.+)/[^/]+$ ]]; then
+                        dir=${BASH_REMATCH[1]}
+                        walk_up+=($dir)
+                    else
+                        dir=""
+                        break
+                    fi
+                done
+                if [[ $dir == "" && ${walk_up[${#walk_up[@]} - 1]} != "/" ]]; then
+                    walk_up+=("/")
+                fi
+            fi
+
+            #   walk the destination filesystem path downwards until a common
+            #   prefix of source and destination directory is found
+            local dir="$dst"
+            local walk_dn=($dir)
+            while [[ ${src#$dir} == $src ]]; do
+                if [[ $dir =~ ^(.+)/[^/]+$ ]]; then
+                    dir=${BASH_REMATCH[1]}
+                    walk_dn=($dir "${walk_dn[@]}")
+                else
+                    dir=""
+                    break
+                fi
+            done
+            if [[ $dir == "" && ${walk_dn[0]} != "/" ]]; then
+                walk_dn=("/" "${walk_dn[@]}")
+            fi
+
+            #   ensure that we do not walk up and then just down the exactly same directory
+            if [[ $init -eq 0 ]]; then
+                local i=${#walk_up[*]}
+                local j=${#walk_dn[*]}
+                if [[ $i -gt 0 && $j -gt 0 ]]; then
+                    i=$(($i - 1))
+                    if [[ ${walk_up[i]} == ${walk_dn[0]} ]]; then
+                        walk_up=("${walk_up[@]:0:${#walk_up[@]}-1}")
+                        walk_dn=("${walk_dn[@]:1}")
+                    fi
+                fi
+            fi
+
+            #   parse .envrc file
+            processfile () {
+                local mode="$1"
+                local dir="$2"
+                local file="$3"
+                while read -r line; do
+                    if [[ ! ($line =~ ^#.* || $line == "") ]]; then
+                        if [[ $line =~ ^\ *([^ ]+)\ *([:^$]=)\ *([^ ]+|\"([^\"\"]*)\")\ *$ ]]; then
+                            local name=${BASH_REMATCH[1]}
+                            local op=${BASH_REMATCH[2]}
+                            local value=${BASH_REMATCH[3]}
+                            local value2=${BASH_REMATCH[4]}
+                            if [[ $value2 != "" ]]; then
+                                value=$value2
+                            fi
+                            value=${value/\\${PWD}/${dir}}
+                            value=${value/\\$PWD/${dir}}
+                            value=${value/\\${HOME}/${HOME}}
+                            value=${value/\\$HOME/${HOME}}
+                            value=${value/\\${LOGNAME}/${LOGNAME}}
+                            value=${value/\\$LOGNAME/${LOGNAME}}
+                            if [[ $mode == "activate" ]]; then
+                                if [[ ${verbose} -ge 2 ]]; then
+                                    echo "envrc: ACTIVATE: environment directive \"$line\"" 1>&2
+                                fi
+                                if [[ $op == ":=" ]]; then
+                                    eval "${name}='${value}'"
+                                elif [[ $op == "^=" ]]; then
+                                    eval "${name}='${value}'\$${name}"
+                                elif [[ $op == "\$=" ]]; then
+                                    eval "${name}=\$${name}'${value}'"
+                                fi
+                            elif [[ $mode == "deactivate" ]]; then
+                                if [[ ${verbose} -ge 2 ]]; then
+                                    echo "envrc: DEACTIVATE: environment directive \"$line\"" 1>&2
+                                fi
+                                if [[ $op == ":=" ]]; then
+                                    eval "unset ${name}"
+                                elif [[ $op == "^=" ]]; then
+                                    eval "${name}='${value}'\$${name}"
+                                elif [[ $op == "\$=" ]]; then
+                                    eval "${name}=\$${name}'${value}'"
+                                fi
+                            fi
+                        fi
+                    fi
+                done < "${dir}/${file}"
+            }
+
+            #   load ~/.envlist whitelist
+            local whitelist=($(< ~/.envlist ))
+            whitelisted () {
+                local dir="$1"
+                for entry in "${whitelist[@]}"; do
+                    if [[ $entry == $dir ]]; then
+                        return 0
+                    fi
+                done
+                return 1
+            }
+
+            #   walk filesystem up and deactivate all entries of ".envrc" files
+            for dir in "${walk_up[@]}"; do
+                if [[ -f "${dir}/.envrc" ]]; then
+                    if whitelisted "${dir}"; then
+                        if [[ ${verbose} -ge 1 ]]; then
+                            echo "envrc: DEACTIVATE: environment configuration \"${dir}/.envrc\""
+                        fi
+                        processfile deactivate "${dir}" ".envrc"
+                    fi
+                fi
+            done
+
+            #   walk filesystem down and activate all entries of ".envrc" files
+            for dir in "${walk_dn[@]}"; do
+                if [[ -f "${dir}/.envrc" ]]; then
+                    if whitelisted "${dir}"; then
+                        if [[ ${verbose} -ge 1 ]]; then
+                            echo "envrc: ACTIVATE: environment configuration \"${dir}/.envrc\""
+                        fi
+                        processfile activate "${dir}" ".envrc"
+                    fi
+                fi
+            done
+        fi
+    }
+fi
+

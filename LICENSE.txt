@@ -1,27 +1,4 @@
 
-bash-envrc
-==========
-
-### Enhance GNU Bash with Environment Variable Run-Commands
-
-About
------
-
-This is an elaborated [GNU Bash](https://www.gnu.org/software/bash/)
-run-command script which enhances interactive shell sessions with the
-possibility to automatically activate environment variables through
-the execution of (explicitly to be whitelisted) `.envrc` run-command scripts.
-
-Usage
------
-
-```
-source bash-envrc.rc
-```
-
-License
--------
-
 Copyright (c) 2018 Ralf S. Engelschall (http://engelschall.com/)
 
 Permission is hereby granted, free of charge, to any person obtaining
