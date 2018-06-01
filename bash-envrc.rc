@@ -230,9 +230,9 @@ if [[ $- =~ .*i.* ]]; then
                                 if [[ $op == ":=" ]]; then
                                     cmd="${name}='${value}'"
                                 elif [[ $op == "^=" ]]; then
-                                    cmd="${name}='${value}'\$${name}"
+                                    cmd="${name}='${value}'\${${name}}"
                                 elif [[ $op == "\$=" ]]; then
-                                    cmd="${name}=\$${name}'${value}'"
+                                    cmd="${name}=\${${name}}'${value}'"
                                 fi
                                 if [[ ${verbose} -ge 3 ]]; then
                                     echo "envrc: ACTIVATE: evaluate shell command \"$cmd\"" 1>&2
@@ -245,9 +245,9 @@ if [[ $- =~ .*i.* ]]; then
                                 if [[ $op == ":=" ]]; then
                                     cmd="unset ${name}"
                                 elif [[ $op == "^=" ]]; then
-                                    :
+                                    cmd="${name}=\${${name}#${value}}"
                                 elif [[ $op == "\$=" ]]; then
-                                    :
+                                    cmd="${name}=\${${name}%${value}}"
                                 fi
                                 if [[ ${verbose} -ge 3 ]]; then
                                     echo "envrc: DEACTIVATE: evaluate shell command \"$cmd\"" 1>&2
