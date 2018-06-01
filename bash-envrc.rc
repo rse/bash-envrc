@@ -24,6 +24,7 @@
 
 #   we enhance bash(1) only for interactive sessions...
 if [[ $- =~ .*i.* ]]; then
+    #   provide the envrc(1) command
     envrc () {
         #   sanity check usage
         if [[ $# -lt 1 ]]; then
@@ -212,33 +213,45 @@ if [[ $- =~ .*i.* ]]; then
                             if [[ $value2 != "" ]]; then
                                 value=$value2
                             fi
+
+                            #   always expand some special variables
                             value=${value/\\${PWD}/${dir}}
                             value=${value/\\$PWD/${dir}}
                             value=${value/\\${HOME}/${HOME}}
                             value=${value/\\$HOME/${HOME}}
                             value=${value/\\${LOGNAME}/${LOGNAME}}
                             value=${value/\\$LOGNAME/${LOGNAME}}
+
+                            #   dispatch into activation or deactivation
                             if [[ $mode == "activate" ]]; then
                                 if [[ ${verbose} -ge 2 ]]; then
                                     echo "envrc: ACTIVATE: environment directive \"$line\"" 1>&2
                                 fi
                                 if [[ $op == ":=" ]]; then
-                                    eval "${name}='${value}'"
+                                    cmd="${name}='${value}'"
                                 elif [[ $op == "^=" ]]; then
-                                    eval "${name}='${value}'\$${name}"
+                                    cmd="${name}='${value}'\$${name}"
                                 elif [[ $op == "\$=" ]]; then
-                                    eval "${name}=\$${name}'${value}'"
+                                    cmd="${name}=\$${name}'${value}'"
+                                fi
+                                if [[ ${verbose} -ge 3 ]]; then
+                                    echo "envrc: ACTIVATE: evaluate shell command \"$cmd\"" 1>&2
+                                    eval "${cmd}"
                                 fi
                             elif [[ $mode == "deactivate" ]]; then
                                 if [[ ${verbose} -ge 2 ]]; then
                                     echo "envrc: DEACTIVATE: environment directive \"$line\"" 1>&2
                                 fi
                                 if [[ $op == ":=" ]]; then
-                                    eval "unset ${name}"
+                                    cmd="unset ${name}"
                                 elif [[ $op == "^=" ]]; then
-                                    eval "${name}='${value}'\$${name}"
+                                    :
                                 elif [[ $op == "\$=" ]]; then
-                                    eval "${name}=\$${name}'${value}'"
+                                    :
+                                fi
+                                if [[ ${verbose} -ge 3 ]]; then
+                                    echo "envrc: DEACTIVATE: evaluate shell command \"$cmd\"" 1>&2
+                                    eval "${cmd}"
                                 fi
                             fi
                         fi
@@ -281,7 +294,16 @@ if [[ $- =~ .*i.* ]]; then
                     fi
                 fi
             done
+
+        else
+            echo "-bash: envrc: ERROR: invalid command \"${cmd}\"" 1>&2
+            return 1
         fi
     }
+
+    #   optionally automatically integrate into FZF-enhanced cd(1) command
+    if [[ -v __fzf_version ]]; then
+        __fzf_cd_hooks+=("envrc switch -v -v \"\$PWD\" \"\$OLDPWD\"")
+    fi
 fi
 
