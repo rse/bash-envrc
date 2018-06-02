@@ -15,9 +15,22 @@ the execution of (explicitly to be whitelisted) `.envrc` run-command scripts.
 Usage
 -----
 
-```
-source bash-envrc.rc
-```
+- `$ vi ~/.bash_login`:
+
+    ```
+    source /path/to/bash-envrc.rc
+    envrc switch -i $HOME
+    ```
+
+- `$ vi ~/prj/foo/.bash_envrc`:
+
+    ```
+    -> echo "++ entering project \"foo\""
+    <- echo "++ leaving project \"foo\""
+    PATH! ^= ${PWD}/bin:
+    ```
+
+- `$ envrc add ~/prj/foo`
 
 License
 -------
