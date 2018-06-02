@@ -217,55 +217,92 @@ if [[ $- =~ .*i.* ]]; then
                 local file="$3"
                 while read -r line; do
                     if [[ ! ($line =~ ^#.* || $line == "") ]]; then
-                        if [[ $line =~ ^\ *([^ ]+)\ *([:^$]=)\ *([^ ]+|\"([^\"\"]*)\")\ *$ ]]; then
+                        if [[ $line =~ ^\ *([^ !]+)(!?)\ *([:^$]=)\ *(\"([^\"\"]*)\"|[^ ]+)\ *$ ]]; then
                             local name=${BASH_REMATCH[1]}
-                            local op=${BASH_REMATCH[2]}
-                            local value=${BASH_REMATCH[3]}
-                            local value2=${BASH_REMATCH[4]}
+                            local exp=${BASH_REMATCH[2]}
+                            local op=${BASH_REMATCH[3]}
+                            local value=${BASH_REMATCH[4]}
+                            local value2=${BASH_REMATCH[5]}
                             if [[ $value2 != "" ]]; then
                                 value=$value2
                             fi
 
-                            #   always expand some special variables
+                            #   always expand old value
+                            local value_old
+                            eval "value_old=\${${name}}"
+                            eval "value=\${value/\\\\\${${name}}/\${value_old}}"
+                            eval "value=\${value/\\\\\$${name}/\${value_old}}"
+
+                            #   always expand some standard variables
                             value=${value/\\${PWD}/${dir}}
                             value=${value/\\$PWD/${dir}}
                             value=${value/\\${HOME}/${HOME}}
                             value=${value/\\$HOME/${HOME}}
                             value=${value/\\${LOGNAME}/${LOGNAME}}
                             value=${value/\\$LOGNAME/${LOGNAME}}
+                            value=${value/\\${TERM}/${TERM}}
+                            value=${value/\\$TERM/${TERM}}
 
                             #   dispatch into activation or deactivation
                             if [[ $mode == "activate" ]]; then
                                 if [[ ${verbose} -ge 2 ]]; then
-                                    echo "envrc: ACTIVATE: environment directive \"$line\"" 1>&2
+                                    echo "envrc: ACTIVATE: environment directive: ${name}${exp} ${op} ${value}" 1>&2
                                 fi
+                                local cmd
                                 if [[ $op == ":=" ]]; then
-                                    cmd="${name}='${value}'"
+                                    cmd="[[ -v ${name} ]] && __envrc_${name}+=(\${${name}});"
+                                    cmd="$cmd ${name}='${value}'"
                                 elif [[ $op == "^=" ]]; then
-                                    cmd="${name}='${value}'\${${name}}"
+                                    cmd="${name}='${value}'\${${name}-''}"
                                 elif [[ $op == "\$=" ]]; then
-                                    cmd="${name}=\${${name}}'${value}'"
+                                    cmd="${name}=\${${name}-''}'${value}'"
+                                fi
+                                if [[ $exp == "!" ]]; then
+                                    cmd="$cmd; export ${name}"
                                 fi
                                 if [[ ${verbose} -ge 3 ]]; then
-                                    echo "envrc: ACTIVATE: evaluate shell command \"$cmd\"" 1>&2
-                                    eval "${cmd}"
+                                    echo "envrc: ACTIVATE: execute: ${cmd}" 1>&2
                                 fi
+                                eval "${cmd}"
                             elif [[ $mode == "deactivate" ]]; then
                                 if [[ ${verbose} -ge 2 ]]; then
-                                    echo "envrc: DEACTIVATE: environment directive \"$line\"" 1>&2
+                                    echo "envrc: DEACTIVATE: environment directive: ${name}${exp} ${op} ${value}" 1>&2
                                 fi
+                                local cmd
                                 if [[ $op == ":=" ]]; then
-                                    cmd="unset ${name}"
+                                    cmd="if [[ \${#__envrc_${name}[@]} -gt 1 ]];"
+                                    cmd="$cmd then ${name}=\${__envrc_${name}[\${#__envrc_${name}[@]}-1]};"
+                                    cmd="$cmd __envrc_${name}=(\"\${__envrc_${name}[@]:0:\${#__envrc_${name}[@]}-1}\");"
+                                    cmd="$cmd elif [[ \${#__envrc_${name}[@]} -eq 1 ]];"
+                                    cmd="$cmd then ${name}=\${__envrc_${name}[0]}; unset __envrc_${name};"
+                                    cmd="$cmd else unset ${name};"
+                                    cmd="$cmd fi"
                                 elif [[ $op == "^=" ]]; then
-                                    cmd="${name}=\${${name}#${value}}"
+                                    cmd="${name}=\${${name}#${value}}; [[ -z \${${name}} ]] && unset ${name}"
                                 elif [[ $op == "\$=" ]]; then
-                                    cmd="${name}=\${${name}%${value}}"
+                                    cmd="${name}=\${${name}%${value}}; [[ -z \${${name}} ]] && unset ${name}"
                                 fi
                                 if [[ ${verbose} -ge 3 ]]; then
-                                    echo "envrc: DEACTIVATE: evaluate shell command \"$cmd\"" 1>&2
-                                    eval "${cmd}"
+                                    echo "envrc: DEACTIVATE: execute: ${cmd}" 1>&2
                                 fi
+                                eval "${cmd}"
                             fi
+                        elif [[ $line =~ ^\ *(->|<-)\ +(.+)$ ]]; then
+                            local on=${BASH_REMATCH[1]}
+                            local cmd=${BASH_REMATCH[2]}
+                            if [[ $mode == "activate" && ${on} == "->" ]]; then
+                                if [[ ${verbose} -ge 2 ]]; then
+                                    echo "envrc: ACTIVATE: environment command: ${cmd}" 1>&2
+                                fi
+                                eval "${cmd}"
+                            elif [[ $mode == "deactivate" && ${on} == "<-" ]]; then
+                                if [[ ${verbose} -ge 2 ]]; then
+                                    echo "envrc: DEACTIVATE: environment command: ${cmd}" 1>&2
+                                fi
+                                eval "${cmd}"
+                            fi
+                        else
+                            echo "-bash: envrc: WARNING: invalid directive \"$line\" in \"${dir}/${file}\"" 1>&2
                         fi
                     fi
                 done < "${dir}/${file}"
@@ -315,7 +352,20 @@ if [[ $- =~ .*i.* ]]; then
 
     #   optionally automatically integrate into FZF-enhanced cd(1) command
     if [[ -v __fzf_version ]]; then
-        __fzf_cd_hooks+=("envrc switch -v -v \"\$PWD\" \"\$OLDPWD\"")
+        __envrc_cmd="envrc switch \${ENVRC_SWITCH_OPTS} \"\${PWD}\" \"\${OLDPWD}\""
+        __envrc_hooked=0
+        for __envrc_hook in "${__fzf_cd_hooks[@]}"; do
+            if [[ ${__envrc_hook} == ${__envrc_cmd} ]]; then
+                __envrc_hooked=1
+                break
+            fi
+        done
+        if [[ ${__envrc_hooked} -eq 0 ]]; then
+            __fzf_cd_hooks+=("${__envrc_cmd}")
+        fi
+        unset __envrc_cmd
+        unset __envrc_hooked
+        unset __envrc_hook
     fi
 fi
 
