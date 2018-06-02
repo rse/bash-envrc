@@ -24,6 +24,10 @@
 
 #   we enhance bash(1) only for interactive sessions...
 if [[ $- =~ .*i.* ]]; then
+    #   the dedicated filenames
+    __envmanifest_file=".bash_envrc_manifest"
+    __envrc_file=".bash_envrc"
+
     #   provide the envrc(1) command
     envrc () {
         #   sanity check usage
@@ -44,10 +48,10 @@ if [[ $- =~ .*i.* ]]; then
             ##  list all directories in whitelist
             ##
 
-            if [[ -f ~/.envlist ]]; then
+            if [[ -f "${HOME}/${__envmanifest_file}" ]]; then
                 while read -r line; do
                     echo "envrc: whitelisted directory: \"${line}\""
-                done < ~/.envlist
+                done < "${HOME}/${__envmanifest_file}"
             fi
 
         elif [[ $cmd == "add" ]]; then
@@ -67,17 +71,17 @@ if [[ $- =~ .*i.* ]]; then
             fi
             dir=`builtin cd "$dir" && pwd -P`
             exists=0
-            if [[ -f ~/.envlist ]]; then
+            if [[ -f "${HOME}/${__envmanifest_file}" ]]; then
                 while read -r line; do
                     if [[ $line == $dir ]]; then
                         exists=1
                         break
                     fi
-                done < ~/.envlist
+                done < "${HOME}/${__envmanifest_file}"
             fi
             if [[ $exists -eq 0 ]]; then
-                echo "$dir" >> ~/.envlist
-                echo "envrc: added \"${dir}\" to whitelist \"~/.envlist\""
+                echo "$dir" >> "${HOME}/${__envmanifest_file}"
+                echo "envrc: added \"${dir}\" to whitelist \"${HOME}/${__envmanifest_file}\""
             else
                 echo "envrc: \"${dir}\" already on whitelist (nothing changed)"
             fi
@@ -99,23 +103,24 @@ if [[ $- =~ .*i.* ]]; then
             fi
             dir=`builtin cd "$dir" && pwd -P`
             removed=0
-            if [[ -f ~/.envlist ]]; then
+            if [[ -f "${HOME}/${__envmanifest_file}" ]]; then
                 while read -r line; do
                     if [[ $line == $dir ]]; then
                         removed=1
                         continue
                     fi
                     echo "$line"
-                done < ~/.envlist > ~/.envlist.new
+                done < "${HOME}/${__envmanifest_file}" > "${HOME}/${__envmanifest_file}.new"
                 if [[ $removed -eq 1 ]]; then
-                    echo "envrc: removed \"${dir}\" from whitelist \"~/.envlist\""
-                    mv ~/.envlist.new ~/.envlist
+                    echo "envrc: removed \"${dir}\" from whitelist \"${HOME}/${__envmanifest_file}\""
+                    cp "${HOME}/${__envmanifest_file}.new" "${HOME}/${__envmanifest_file}"
+                    rm -f "${HOME}/${__envmanifest_file}.new"
                 else
-                    echo "envrc: \"${dir}\" not on whitelist \"~/.envlist\" (ignoring removal)"
-                    rm -f ~/.envlist.new
+                    echo "envrc: \"${dir}\" not on whitelist \"${HOME}/${__envmanifest_file}\" (ignoring removal)"
+                    rm -f "${HOME}/${__envmanifest_file}.new"
                 fi
             else
-                echo "envrc: still no such whitelist \"~/.envlist\" (ignoring removal)"
+                echo "envrc: still no such whitelist \"${HOME}/${__envmanifest_file}\" (ignoring removal)"
             fi
 
         elif [[ $cmd == "switch" ]]; then
@@ -210,7 +215,7 @@ if [[ $- =~ .*i.* ]]; then
                 fi
             fi
 
-            #   parse .envrc file
+            #   parse run-command file
             processfile () {
                 local mode="$1"
                 local dir="$2"
@@ -308,38 +313,41 @@ if [[ $- =~ .*i.* ]]; then
                 done < "${dir}/${file}"
             }
 
-            #   load ~/.envlist whitelist
-            local whitelist=($(< ~/.envlist ))
+            #   load whitelist
+            local whitelist=()
+            if [[ -f "${HOME}/${__envmanifest_file}" ]]; then
+                whitelist=($(< "${HOME}/${__envmanifest_file}" ))
+            fi
             whitelisted () {
                 local dir="$1"
                 for entry in "${whitelist[@]}"; do
-                    if [[ $entry == $dir ]]; then
+                    if [[ ${entry} == ${dir} ]]; then
                         return 0
                     fi
                 done
                 return 1
             }
 
-            #   walk filesystem up and deactivate all entries of ".envrc" files
+            #   walk filesystem up and deactivate all entries of run-command files
             for dir in "${walk_up[@]}"; do
-                if [[ -f "${dir}/.envrc" ]]; then
+                if [[ -f "${dir}/${__envrc_file}" ]]; then
                     if whitelisted "${dir}"; then
                         if [[ ${verbose} -ge 1 ]]; then
-                            echo "envrc: DEACTIVATE: environment configuration \"${dir}/.envrc\""
+                            echo "envrc: DEACTIVATE: environment configuration \"${dir}/${__envrc_file}\""
                         fi
-                        processfile deactivate "${dir}" ".envrc"
+                        processfile deactivate "${dir}" "${__envrc_file}"
                     fi
                 fi
             done
 
-            #   walk filesystem down and activate all entries of ".envrc" files
+            #   walk filesystem down and activate all entries of run-command files
             for dir in "${walk_dn[@]}"; do
-                if [[ -f "${dir}/.envrc" ]]; then
+                if [[ -f "${dir}/${__envrc_file}" ]]; then
                     if whitelisted "${dir}"; then
                         if [[ ${verbose} -ge 1 ]]; then
-                            echo "envrc: ACTIVATE: environment configuration \"${dir}/.envrc\""
+                            echo "envrc: ACTIVATE: environment configuration \"${dir}/${__envrc_file}\""
                         fi
-                        processfile activate "${dir}" ".envrc"
+                        processfile activate "${dir}" "${__envrc_file}"
                     fi
                 fi
             done
